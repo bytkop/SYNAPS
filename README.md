@@ -1,3 +1,8 @@
+## Contributors
+
+- [bytkop](https://github.com/bytkop) — Creator & Lead Developer
+- [USERNAME](https://github.com/USERNAME) — Contributor
+
 # SYNAPS | Architecture Studio
 
 **Understand. Construct. Control.**
