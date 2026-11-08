@@ -1,7 +1,7 @@
 ## Contributors
 
 - [bytkop](https://github.com/bytkop) — Creator & Lead Developer
-- [USERNAME](https://github.com/USERNAME) — Contributor
+- [USERNAME](https://github.com/StariyVovchik) — Contributor
 
 # SYNAPS | Architecture Studio
 
