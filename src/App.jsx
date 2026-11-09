@@ -117,7 +117,107 @@ ${ctx.join("\n")}`:""].filter(Boolean).join("\n\n")},{role:"user",content:String
  const exportSkill=skill=>{const blob=new Blob([JSON.stringify({manifestVersion:1,name:skill.name,version:skill.version,description:skill.description,instructions:skill.instructions},null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${skill.name.toLowerCase().replace(/[^a-z0-9-]+/g,"-")||"synaps-skill"}.json`;a.click();URL.revokeObjectURL(a.href)};
  const createCustomNode=()=>{if(!nodeDraft.name.trim()){note("Укажите имя узла");return}const item={...nodeDraft,id:makeId(),inputs:[nodeDraft.inputType],outputs:[nodeDraft.outputType],handlerStatus:"manifest-only",createdAt:new Date().toISOString()};setCustomNodes(xs=>[item,...xs]);setNodeDraft({name:"",description:"",category:"PROCESSING",version:"1.0.0",inputType:"text",outputType:"text",documentation:""});setCustomModal(false);note("Manifest сохранён; исполнителя нет")};
  const exportCustomNode=item=>{const manifest={manifestVersion:1,name:item.name,version:item.version,description:item.description,category:item.category,inputs:item.inputs.map(type=>({name:"input",type})),outputs:item.outputs.map(type=>({name:"output",type})),documentation:item.documentation,execution:{status:"not-implemented",script:null},dependencies:[]};const blob=new Blob([JSON.stringify(manifest,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${item.name.toLowerCase().replace(/[^a-z0-9-]+/g,"-")||"custom-node"}.json`;a.click();URL.revokeObjectURL(a.href)};
- const runLabModels=async(modelNames=labDraft.selectedModels,sourceDraft=labDraft,sourceSettings=settings)=>{if(labRunning)return;if(!modelNames.length){setLabError("Select at least one discovered model.");return}let base;try{validateProviderConfig({kind:sourceSettings.provider,baseUrl:sourceSettings.endpoint});base=createExperiment({name:sourceDraft.name,systemPrompt:sourceDraft.systemPrompt,userPrompt:sourceDraft.userPrompt,context:sourceDraft.context,models:modelNames,settings:{provider:sourceSettings.provider,endpoint:sourceSettings.endpoint,temperature:Number(sourceSettings.temperature),topP:Number(sourceSettings.topP),maxTokens:Number(sourceSettings.maxTokens),contextTokens:Number(sourceSettings.contextTokens)},variables:sourceDraft.variables})}catch(e){setLabError(String(e));return}setLabError("");setLabRunning(true);const startedAt=new Date().toISOString();logActivity("experiment-started",`Experiment “${base.name}” started for ${modelNames.length} model(s)`);const results=[];for(const model of modelNames){const began=performance.now();const caseResults=[];for(const [caseIndex,input] of [base.userPrompt,...base.testCases].entries()){const caseStarted=performance.now();let response="",failure=null,usage={promptTokens:null,completionTokens:null};try{const messages=[{role:"system",content:[base.systemPrompt,resolveVariables(base.context,base.variables)].filter(Boolean).join("\n\n")},{role:"user",content:input}];await streamNative({requestId:`lab-${makeId()}`,provider:{kind:sourceSettings.provider,baseUrl:sourceSettings.endpoint},model,messages,options:{temperature:base.settings.temperature,top_p:base.settings.topP,...(sourceSettings.provider==="ollama"?{num_predict:base.settings.maxTokens,num_ctx:base.settings.contextTokens}:{max_tokens:base.settings.maxTokens})}},ev=>{if(ev.kind==="delta")response+=ev.delta||"";if(ev.promptTokens!=null)usage.promptTokens=ev.promptTokens;if(ev.completionTokens!=null)usage.completionTokens=ev.completionTokens;if(ev.kind==="error")failure=ev.error||"Provider returned an unspecified streaming error."});}catch(e){failure=String(e)}caseResults.push({index:caseIndex+1,input,response,error:failure,durationMs:Math.round(performance.now()-caseStarted),usage})}const failedCases=caseResults.filter(item=>item.error);const allPrompt=caseResults.every(item=>item.usage.promptTokens!=null),allCompletion=caseResults.every(item=>item.usage.completionTokens!=null);results.push({model,provider:sourceSettings.provider,endpoint:sourceSettings.endpoint,response:caseResults.map(item=>`Case ${item.index}\n${item.response}`).join("\n\n"),error:failedCases.length?`${failedCases.length} test case(s) failed. ${failedCases.map(item=>item.error).join("; ")}`:null,durationMs:Math.round(performance.now()-began),usage:{promptTokens:allPrompt?caseResults.reduce((sum,item)=>sum+item.usage.promptTokens,0):null,completionTokens:allCompletion?caseResults.reduce((sum,item)=>sum+item.usage.completionTokens,0):null},testCases:caseResults,settings:{...base.settings}})}const saved={...base,id:makeId(),createdAt:startedAt,settings:{...base.settings},results};setExperiments(items=>[saved,...items]);setLabRunning(false);const failures=results.filter(item=>item.error).length;logActivity(failures?"experiment-failed":"experiment-completed",`Experiment “${base.name}” finished: ${results.length-failures} succeeded, ${failures} failed`);if(failures)setLabError(`${failures} model request(s) failed. See each result for the provider error.`);note(`Experiment completed: ${results.length-failures}/${results.length} model(s) returned a response.`)};
+ const runLabModels = async (modelNames = labDraft.selectedModels, sourceDraft = labDraft, sourceSettings = settings) => {
+  if (labRunning) return;
+  if (!modelNames.length) { setLabError("Select at least one discovered model."); return; }
+
+  let experiment;
+  try {
+   validateProviderConfig({ kind: sourceSettings.provider, baseUrl: sourceSettings.endpoint });
+   experiment = createExperiment({
+    name: sourceDraft.name,
+    systemPrompt: sourceDraft.systemPrompt,
+    userPrompt: sourceDraft.userPrompt,
+    context: sourceDraft.context,
+    models: modelNames,
+    settings: {
+     provider: sourceSettings.provider,
+     endpoint: sourceSettings.endpoint,
+     temperature: Number(sourceSettings.temperature),
+     topP: Number(sourceSettings.topP),
+     maxTokens: Number(sourceSettings.maxTokens),
+     contextTokens: Number(sourceSettings.contextTokens),
+    },
+    variables: sourceDraft.variables,
+    testCases: sourceDraft.testCases || [],
+   });
+  } catch (error) {
+   setLabError(String(error));
+   return;
+  }
+
+  setLabError("");
+  setLabRunning(true);
+  const createdAt = new Date().toISOString();
+  logActivity("experiment-started", `Experiment “${experiment.name}” started for ${modelNames.length} model(s)`);
+  const results = [];
+
+  for (const model of modelNames) {
+   const modelStarted = performance.now();
+   const caseResults = [];
+   const inputs = [experiment.userPrompt, ...experiment.testCases];
+
+   for (const [index, input] of inputs.entries()) {
+    const caseStarted = performance.now();
+    let response = "";
+    let error = null;
+    const usage = { promptTokens: null, completionTokens: null };
+    try {
+     const messages = [
+      { role: "system", content: [experiment.systemPrompt, resolveVariables(experiment.context, experiment.variables)].filter(Boolean).join("\n\n") },
+      { role: "user", content: input },
+     ];
+     await streamNative({
+      requestId: `lab-${makeId()}`,
+      provider: { kind: sourceSettings.provider, baseUrl: sourceSettings.endpoint },
+      model,
+      messages,
+      options: {
+       temperature: experiment.settings.temperature,
+       top_p: experiment.settings.topP,
+       ...(sourceSettings.provider === "ollama"
+        ? { num_predict: experiment.settings.maxTokens, num_ctx: experiment.settings.contextTokens }
+        : { max_tokens: experiment.settings.maxTokens }),
+      },
+     }, event => {
+      if (event.kind === "delta") response += event.delta || "";
+      if (event.promptTokens != null) usage.promptTokens = event.promptTokens;
+      if (event.completionTokens != null) usage.completionTokens = event.completionTokens;
+      if (event.kind === "error") error = event.error || "Provider returned an unspecified streaming error.";
+     });
+    } catch (caught) {
+     error = String(caught);
+    }
+    caseResults.push({ index: index + 1, input, response, error, durationMs: Math.round(performance.now() - caseStarted), usage });
+   }
+
+   const failedCases = caseResults.filter(item => item.error);
+   const hasPromptUsage = caseResults.every(item => item.usage.promptTokens != null);
+   const hasCompletionUsage = caseResults.every(item => item.usage.completionTokens != null);
+   results.push({
+    model,
+    provider: sourceSettings.provider,
+    endpoint: sourceSettings.endpoint,
+    response: caseResults.map(item => `Case ${item.index}\n${item.response}`).join("\n\n"),
+    error: failedCases.length ? `${failedCases.length} test case(s) failed. ${failedCases.map(item => item.error).join("; ")}` : null,
+    durationMs: Math.round(performance.now() - modelStarted),
+    usage: {
+     promptTokens: hasPromptUsage ? caseResults.reduce((sum, item) => sum + item.usage.promptTokens, 0) : null,
+     completionTokens: hasCompletionUsage ? caseResults.reduce((sum, item) => sum + item.usage.completionTokens, 0) : null,
+    },
+    testCases: caseResults,
+    settings: { ...experiment.settings },
+   });
+  }
+
+  const saved = { ...experiment, id: makeId(), createdAt, settings: { ...experiment.settings }, results };
+  setExperiments(items => [saved, ...items]);
+  setLabRunning(false);
+  const failures = results.filter(item => item.error).length;
+  logActivity(failures ? "experiment-failed" : "experiment-completed", `Experiment “${experiment.name}” finished: ${results.length - failures} succeeded, ${failures} failed`);
+  if (failures) setLabError(`${failures} model request(s) failed. See each result for the provider error.`);
+  note(`Experiment completed: ${results.length - failures}/${results.length} model(s) returned a response.`);
+ };
  const savePromptSnapshot=()=>{const snapshot={id:makeId(),createdAt:new Date().toISOString(),system:promptPreview.sys,user:promptPreview.user,context:promptPreview.ctx,variables:{...promptVariables}};setPromptHistory(rows=>[snapshot,...rows].slice(0,100));logActivity("prompt-saved","Prompt snapshot saved to local history");note("Prompt saved to local history")};
  const // Prompt Workbench — отдельные переменные основного редактора
 const addPromptVariable = () => {

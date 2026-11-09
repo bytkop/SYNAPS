@@ -1,8 +1,3 @@
-## Contributors
-
-- [bytkop](https://github.com/bytkop) — Creator & Lead Developer
-- [StariyVovchik](https://github.com/StariyVovchik) — Contributor
-
 # SYNAPS 0.5.0 | Engineering Workbench for Local AI
 
 SYNAPS is a desktop engineering workspace for experimenting with local language models, prompts, workflows, and model behavior. It is a source project, not a compiled Windows installer.
