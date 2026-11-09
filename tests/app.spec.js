@@ -12,8 +12,8 @@ test("workspace renders, saves project, and keeps model unbound until configured
 test("context and prompt page previews explicit system and context text", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Context & prompts" }).click();
-  await expect(page.getByRole("heading", { name: "Контекст и системный промпт" })).toBeVisible();
-  await expect(page.getByText(/EFFECTIVE REQUEST PREVIEW/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Prompt Workbench" })).toBeVisible();
+  await expect(page.getByText("RESOLVED PROMPT PREVIEW", { exact: true })).toBeVisible();
 });
 
 test("creates a user skill manifest without executing its instructions", async ({ page }) => {
