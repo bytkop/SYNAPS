@@ -37,14 +37,14 @@ Set-ExecutionPolicy -Scope Process Bypass
 Alternative verification/build commands:
 
 ```powershell
-npm install
+npm install --registry=https://registry.npmjs.org/
 npm run test:unit
 npm test
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri -- build
 ```
 
-The supplied sandbox had Node and a browser but no npm command, Vite install, Rust compiler, Windows toolchain, or network access. Source JSX was bundled with local esbuild and all 21 Playwright UI scenarios plus 7 unit tests passed; the official Vite production build, Cargo tests, Tauri IPC compile, live providers, and Windows installer were not run. Lockfiles and installer output are not included.
+The Windows workflow and local script explicitly use the public npm registry with retries and a 5-minute fetch timeout, avoiding reliance on the failing npm mirror. The supplied sandbox could not run the real npm install or Windows build; those must be confirmed by the next GitHub Actions run. Source JSX was bundled with local esbuild and all 21 Playwright UI scenarios plus 7 unit tests passed; the official Vite production build, Cargo tests, Tauri IPC compile, live providers, and Windows installer were not run. Lockfiles and installer output are not included.
 
 ## Privacy and safety
 

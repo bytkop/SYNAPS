@@ -2,6 +2,7 @@
 
 ## 0.5.0 - Engineering Workbench update
 
+- Fixed Windows dependency-install workflow to use the public npm registry with retries and extended timeout.
 - Added local English, Russian, and Simplified Chinese interface localization with system-language detection, a persistent manual override, and locale-aware date formatting. No online translation service is used; authored prompts and model responses are left unchanged.
 
 - Added a real Experiment Lab that streams the same resolved prompt to selected discovered models and persists actual responses, provider errors, duration, and provider-reported usage.

@@ -19,7 +19,9 @@ jobs:
         shell: pwsh
         run: choco install nsis -y --no-progress
       - name: Install JavaScript dependencies
-        run: npm install
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+        run: npm install --registry=https://registry.npmjs.org/ --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000
       - name: Run UI tests
         run: |
           npx playwright install chromium

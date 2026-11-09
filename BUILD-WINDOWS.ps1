@@ -6,8 +6,8 @@ Write-Host "Prerequisites: Node.js 22+, Rust stable (MSVC target), Visual Studio
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "Node.js/npm not found. Install Node.js 22+ first." }
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw "Rust/Cargo not found. Install Rust stable first." }
 
-npm install
-if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+npm install --registry=https://registry.npmjs.org/ --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000
+if ($LASTEXITCODE -ne 0) { throw "npm install failed. Check access to https://registry.npmjs.org/ and retry." }
 npm run test:unit
 if ($LASTEXITCODE -ne 0) { throw "Unit tests failed" }
 npm test
