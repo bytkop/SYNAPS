@@ -1,3 +1,4 @@
+
 import { expect, test } from "@playwright/test";
 
 test("workspace renders, saves project, and keeps model unbound until configured", async ({ page }) => {
