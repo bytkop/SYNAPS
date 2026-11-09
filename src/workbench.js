@@ -35,7 +35,14 @@ export function validateGraph(nodes = [], edges = []) {
 }
 
 export function sanitizeProjectSettings(settings = {}) {
-  return Object.fromEntries(Object.entries(settings).filter(([key]) => !/(api.?key|secret|token|password|authorization)/i.test(key)));
+  const sanitize = value => {
+    if (Array.isArray(value)) return value.map(sanitize);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !/(api.?key|secret|token|password|authorization)/i.test(key))
+      .map(([key, item]) => [key, sanitize(item)]));
+  };
+  return sanitize(settings);
 }
 
 export function serializeProject({ name, nodes, edges, settings, prompts = [], experiments = [], testCases = [], labDraft = null, promptVariables = {} }) {

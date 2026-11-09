@@ -9,7 +9,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
     "test": "playwright test",
-    "test:unit": "node --test tests/workbench.test.js"
+    "test:unit": "node --test tests/workbench.unit.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "=2.12.3",

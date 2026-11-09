@@ -10,7 +10,14 @@ SYNAPS is a desktop engineering workspace for experimenting with local language 
 - Experiment Lab sends the same resolved system/user prompt to selected discovered models, records each actual response or provider error, duration, and reported token usage, and saves results locally. No benchmark scores are invented.
 - Prompt Workbench supports reusable `{{variables}}`, resolved-request preview, and local prompt snapshots.
 - Project JSON export strips secret-shaped setting keys. Recent projects and experiment/prompt records are saved locally; Tauri SQLite versions remain available.
-- Activity and diagnostics record observed discovery, run, and project events. Skills and custom-node manifests remain declarative data, never auto-executed.
+- Activity and diagnostics record observed discovery, run, and project events. Skill manifests include author, inputs, outputs, required capabilities, prompt instructions, and workflow templates; imported manifests can be inspected, and code is never auto-executed.
+
+## Interface languages
+
+- Auto mode follows the system/browser language and selects Simplified Chinese for `zh-*`, Russian for `ru-*`, and English for `en-*`; unsupported languages fall back to English.
+- The language selector is always available in the top bar. A manual choice is saved on this device and overrides automatic detection.
+- English, Russian, and Simplified Chinese are bundled locally. This is UI localization, not an online machine-translation service: no text is sent out for translation, and user prompts, model responses, provider errors, project names, and imported content are not translated.
+- Dates and times use the selected interface locale.
 
 ## Known boundaries
 
@@ -37,7 +44,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri -- build
 ```
 
-The build workflow is not verified here: the supplied sandbox has no Node/npm, Rust compiler, Windows toolchain, or network access. Lockfiles and installer output are not included.
+The supplied sandbox had Node and a browser but no npm command, Vite install, Rust compiler, Windows toolchain, or network access. Source JSX was bundled with local esbuild and all 21 Playwright UI scenarios plus 7 unit tests passed; the official Vite production build, Cargo tests, Tauri IPC compile, live providers, and Windows installer were not run. Lockfiles and installer output are not included.
 
 ## Privacy and safety
 

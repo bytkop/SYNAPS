@@ -1,8 +1,11 @@
 # Status
 
-**SYNAPS 0.5.0 source update, partially implemented and not build-verified.**
+**SYNAPS 0.5.0 source update, browser-tested; native build remains unverified.**
 
-- Implemented in source: real multi-model prompt runs through the configured local provider, per-model result/error persistence, variable resolution, prompt history, model metadata inspection, local project recents/Save As, project export filtering, activity/diagnostics, and graph validation helpers.
-- Experimental: provider streaming, LM Studio Native, SQLite, and managed llama-server paths; no live provider or Tauri runtime was available to verify them.
-- Planned/unavailable: parallel experiments, full graph runtime, document/audio/RAG, secret vault, code sandbox, training/LoRA, signed installer.
-- Tests added: Node unit tests and Playwright UI tests plus existing Rust tests. Node unit tests ran: 5 passed. `npm test`, production build, Rust tests, and Windows packaging were not run because npm/Node and Rust are absent from the sandbox.
+- Added bundled English/Russian/Simplified Chinese catalogs, automatic system-language detection, persistent manual override, translated node labels, and locale-aware dates. User prompts and provider output are excluded from UI translation; no translation network or dependency is used.
+
+- Fixed the Vite parse blocker by rewriting the Experiment Lab runner into a clearly closed multiline function, and fixed the Lab variable editor so values are added to the active experiment. Failed provider calls now persist an empty response plus the actual error, never a synthetic output.
+- Preserved the full legacy node catalog and added a regression test that verifies unsupported nodes remain visible and honestly labeled.
+- Implemented full declarative Skill metadata and inspectable JSON import; imported scripts are ignored.
+- Verification: 7 Node unit tests and 21 Playwright UI scenarios passed using a local esbuild browser bundle. This reproduces the UI scenarios but is not the official Vite production build.
+- Still unverified: Vite production build, Cargo/Rust tests, Tauri IPC compile, real provider streaming, and Windows installer. npm/Cargo and the Windows toolchain were unavailable in this environment.
