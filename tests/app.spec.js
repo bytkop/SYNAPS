@@ -108,7 +108,7 @@ test("Experiment Lab sends one resolved prompt to selected models and persists p
   await page.getByRole("button", { name: "Models" }).click();
   await page.getByRole("button", { name: "Refresh models" }).click();
   await expect(page.getByRole("heading", { name: "local-test-model" })).toBeVisible();
-  await expect(page.getByText("7B")).toBeVisible();
+  await expect(page.getByText("7B", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Experiments" }).click();
   await page.getByLabel("Experiment name").fill("Local model comparison");
   await page.getByLabel("Lab system prompt").fill("Answer in {{language}}");
@@ -141,7 +141,7 @@ test("Prompt Workbench resolves variables and retains an honest unresolved place
   await page.getByLabel("User prompt template").fill("Translate {{phrase}} to {{language}}");
   await page.getByLabel("New prompt variable").fill("language");
   await page.getByRole("button", { name: "Add" }).click();
-  await page.getByLabel("Prompt variable language").fill("French");
+  await page.getByRole("textbox", { name: "Prompt variable language" }).fill("French");
   await expect(page.getByText(/Translate \{\{phrase\}\} to French/)).toBeVisible();
 });
 
