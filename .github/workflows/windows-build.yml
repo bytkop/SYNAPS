@@ -23,6 +23,7 @@ jobs:
       - name: Run UI tests
         run: |
           npx playwright install chromium
+          npm run test:unit
           npm test
       - name: Run Rust unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml

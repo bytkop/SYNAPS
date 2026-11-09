@@ -8,6 +8,8 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw "Rust/Cargo 
 
 npm install
 if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+npm run test:unit
+if ($LASTEXITCODE -ne 0) { throw "Unit tests failed" }
 npm test
 if ($LASTEXITCODE -ne 0) { throw "UI tests failed" }
 cargo test --manifest-path src-tauri/Cargo.toml

@@ -1,20 +1,14 @@
 # Next session
 
-## Implemented in source 0.4.0
-- Graph UI and topological scheduling for a supported deterministic subset; all eight template graphs exist, with incomplete paths labeled.
-- Stream endpoint and cancellation flag for Ollama, OpenAI-compatible and LM Studio Native initial path.
-- Provider list models endpoints for Ollama, LM Studio Native, OpenAI-compatible and llama.cpp server.
-- Explicit managed llama-server process start/health/stop/status/log commands with loopback-only binding and no shell.
-- SQLite project version save/list/restore.
-- Theme controls, context/prompt settings, image POV upload, local experiment log, skill and custom node manifests (inert).
-
-## Verified
-- 10 UI tests pass in the artifact runner.
-- Rust compiler is unavailable in this environment, so no Rust compile/unit tests or Windows build were run.
+## SYNAPS 0.5.0 source status
+- Real local-provider multi-model Experiment Lab with prompt variables, repeated test cases, streamed results/errors, duration, provider-reported token usage, persistence, copy/export, and individual rerun.
+- Prompt Workbench with local history and resolved-request preview.
+- Model inventory inspector, local project recents/Save As, project export filtering, activity/diagnostics, focused graph node library, and graph validation.
+- Five Node unit tests pass. Playwright and Rust suites, production build, live provider integrations, and Windows installer remain unverified because the sandbox lacks npm, Rust, Windows build tools, and network access.
 
 ## Critical next actions
 1. On Windows, install prerequisites and run `BUILD-WINDOWS.ps1`.
-2. Fix actual compile issues, run `cargo fmt`, `cargo test --manifest-path src-tauri/Cargo.toml`, `npm test`, and build the NSIS installer.
-3. Commit generated `Cargo.lock` and `package-lock.json`, then test provider commands with mocked Ollama/LM Studio/llama.cpp responses and cancellation.
-4. Validate Native API request/event formats against the current Bionic LM Studio version and supported llama-server health behavior.
-5. Keep incomplete nodes/templates visibly marked. Do not claim full spec compliance or distribute an untested `.exe`.
+2. Fix actual compile/test/build failures; run Node unit tests, Playwright, `cargo test`, and package the NSIS installer.
+3. Commit generated `Cargo.lock` and `package-lock.json` after verifying dependency compatibility.
+4. Test provider discovery and streaming against mock Ollama, current LM Studio Native/OpenAI-compatible mode, and llama.cpp. Add cancellation/error integration coverage.
+5. Build out multi-case diffing and the full graph runtime only after the current source builds and live provider workflows pass.

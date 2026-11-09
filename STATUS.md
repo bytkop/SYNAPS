@@ -1,8 +1,8 @@
 # Status
 
-**Foundation build 0.4.0, partially implemented.**
+**SYNAPS 0.5.0 source update, partially implemented and not build-verified.**
 
-- UI: 10 browser tests passed in the artifact runner.
-- Included: graph execution for a supported subset, eight starter graphs, streaming/cancel source path, Ollama + OpenAI-compatible provider code, LM Studio Native API initial path, localhost-only managed llama-server process controls, SQLite versions, image POV path, local experiments, themes, skill/node manifests.
-- Not verified: npm dependency resolution, Rust compilation, Tauri IPC, Rust tests, real provider streams, SQLite persistence, managed llama-server health path, Windows installer.
-- Not complete: every node handler and template execution, document/audio multimodal flow, custom code/skill sandbox, full Experiment Lab, LoRA/training, feature-complete graph editor, signed/release EXE.
+- Implemented in source: real multi-model prompt runs through the configured local provider, per-model result/error persistence, variable resolution, prompt history, model metadata inspection, local project recents/Save As, project export filtering, activity/diagnostics, and graph validation helpers.
+- Experimental: provider streaming, LM Studio Native, SQLite, and managed llama-server paths; no live provider or Tauri runtime was available to verify them.
+- Planned/unavailable: parallel experiments, full graph runtime, document/audio/RAG, secret vault, code sandbox, training/LoRA, signed installer.
+- Tests added: Node unit tests and Playwright UI tests plus existing Rust tests. Node unit tests ran: 5 passed. `npm test`, production build, Rust tests, and Windows packaging were not run because npm/Node and Rust are absent from the sandbox.

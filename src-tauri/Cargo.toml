@@ -1,6 +1,6 @@
 [package]
 name = "synaps"
-version = "0.4.0"
+version = "0.5.0"
 description = "SYNAPS local-first AI architecture studio"
 authors = ["SYNAPS contributors"]
 edition = "2021"

@@ -87,3 +87,76 @@ test("graph execution records local processing and stops at unavailable inferenc
   await page.getByRole("button", { name: "Brain Inspector" }).click();
   await expect(page.getByText("Prompt Composer", { exact: false }).first()).toBeVisible();
 });
+
+test("Experiment Lab sends one resolved prompt to selected models and persists provider output", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__SYNAPS_TEST_CALLS = [];
+    class Channel { onmessage = null; }
+    window.__TAURI__ = { core: { Channel, invoke: async (command, args) => {
+      window.__SYNAPS_TEST_CALLS.push({ command, args });
+      if (command === "list_projects") return [];
+      if (command === "list_models") return [{ name: "local-test-model", parameter_size: "7B", quantization_level: "Q4_K_M" }];
+      if (command === "stream_completion") {
+        args.onEvent.onmessage({ kind: "delta", delta: "provider output", promptTokens: 8 });
+        args.onEvent.onmessage({ kind: "done", elapsedMs: 24, completionTokens: 4 });
+        return null;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    } } };
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Models" }).click();
+  await page.getByRole("button", { name: "Refresh models" }).click();
+  await expect(page.getByRole("heading", { name: "local-test-model" })).toBeVisible();
+  await expect(page.getByText("7B")).toBeVisible();
+  await page.getByRole("button", { name: "Experiments" }).click();
+  await page.getByLabel("Experiment name").fill("Local model comparison");
+  await page.getByLabel("Lab system prompt").fill("Answer in {{language}}");
+  await page.getByLabel("Lab user prompt").fill("Explain {{topic}}");
+  await page.getByLabel("Lab test cases").fill("Also define {{topic}}");
+  await page.getByLabel("New variable name").fill("language");
+  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByLabel("Variable language").fill("English");
+  await page.getByLabel("New variable name").fill("topic");
+  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByLabel("Variable topic").fill("local inference");
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Run on 1 model(s)" }).click();
+  await expect(page.getByText("provider output").first()).toBeVisible();
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("synaps-experiments")));
+  expect(saved[0].results[0].response).toContain("provider output");
+  expect(saved[0].results[0].testCases).toHaveLength(2);
+  expect(saved[0].systemPrompt).toBe("Answer in English");
+  const request = await page.evaluate(() => window.__SYNAPS_TEST_CALLS.find(call => call.command === "stream_completion").args);
+  expect(request.messages[0].content).toContain("Answer in English");
+  expect(request.messages[1].content).toBe("Explain local inference");
+  const calls = await page.evaluate(() => window.__SYNAPS_TEST_CALLS.filter(call => call.command === "stream_completion"));
+  expect(calls).toHaveLength(2);
+  expect(calls[1].args.messages[1].content).toBe("Also define local inference");
+});
+
+test("Prompt Workbench resolves variables and retains an honest unresolved placeholder", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Context & prompts" }).click();
+  await page.getByLabel("User prompt template").fill("Translate {{phrase}} to {{language}}");
+  await page.getByLabel("New prompt variable").fill("language");
+  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByLabel("Prompt variable language").fill("French");
+  await expect(page.getByText(/Translate \{\{phrase\}\} to French/)).toBeVisible();
+});
+
+test("provider diagnostics expose a concrete discovery failure", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__TAURI__ = { core: { invoke: async (command) => {
+      if (command === "list_projects") return [];
+      if (command === "list_models") throw new Error("Connection refused at localhost:11434");
+      throw new Error(`Unexpected command: ${command}`);
+    } } };
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Models" }).click();
+  await page.getByRole("button", { name: "Refresh models" }).click();
+  await expect(page.getByText(/Connection refused at localhost:11434/)).toBeVisible();
+  await page.getByRole("button", { name: "Activity" }).click();
+  await expect(page.getByText("Unreachable")).toBeVisible();
+});
