@@ -49,3 +49,5 @@ The Windows workflow and local script explicitly use the public npm registry wit
 ## Privacy and safety
 
 Provider endpoints are restricted to localhost/loopback in the Rust backend. Project export filters setting keys that look like API keys, secrets, tokens, passwords, or authorization data. No credentials are collected by this source. The filter is defense-in-depth, not a secrets vault. Skills and custom-node manifests are data only; no imported code runs. No telemetry is implemented.
+
+good luck
