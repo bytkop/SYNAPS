@@ -2,6 +2,11 @@
 
 ## 0.5.0 - Engineering Workbench update
 
+- Added a persistent local Chat Center with streaming requests through the configured local provider, selectable discovered model, editable system prompt, stop action, and per-device conversation history.
+- Added seven explicit Effort profiles, Adaptive prompt-complexity selection, provider-shaped token-budget mapping, and an opt-in `reasoning_effort` parameter for OpenAI-compatible endpoints. Capability detection is not available, so the extra parameter stays off by default.
+- Added a first-entry LLM Lab warning with local project-save backup, a bounded configuration/metadata panel, and an LLM Activity view that reports observed events without presenting hidden reasoning as telemetry.
+- Added unit coverage for provider-specific Effort options and adaptive profile selection. The supplied Anthropic logo image was treated as a reference only; no existing mark is copied.
+
 - Fixed Windows dependency-install workflow to use the public npm registry with retries and extended timeout.
 - Added local English, Russian, and Simplified Chinese interface localization with system-language detection, a persistent manual override, and locale-aware date formatting. No online translation service is used; authored prompts and model responses are left unchanged.
 

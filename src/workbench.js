@@ -61,3 +61,33 @@ export function createExperiment({ name, systemPrompt, userPrompt, context, mode
   if (!Array.isArray(models) || models.length === 0) throw new Error("Select at least one model.");
   return { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: name.trim(), systemPrompt: resolveVariables(systemPrompt, variables), userPrompt: resolveVariables(userPrompt, variables), rawSystemPrompt: systemPrompt, rawUserPrompt: userPrompt, context, models: [...models], settings: { ...settings }, variables: { ...variables }, testCases: testCases.map(input => resolveVariables(input, variables)), rawTestCases: [...testCases], results, createdAt };
 }
+
+export const EFFORT_PROFILES = {
+  INSTANT: { label: "Instant", scale: 0.55, reasoning: "low", speed: "Fastest", load: "Low", description: "Small output budget for quick commands." },
+  LIGHT: { label: "Light", scale: 0.75, reasoning: "low", speed: "Fast", load: "Low", description: "Lean generation for everyday tasks." },
+  STANDARD: { label: "Standard", scale: 1, reasoning: "medium", speed: "Balanced", load: "Moderate", description: "The configured token budget, unchanged." },
+  FOCUSED: { label: "Focused", scale: 1.2, reasoning: "medium", speed: "Slower", load: "Moderate", description: "More output room for code and multi-step work." },
+  DEEP: { label: "Deep", scale: 1.45, reasoning: "high", speed: "Slow", load: "High", description: "Larger output budget for complex analysis." },
+  EXPERT: { label: "Expert", scale: 1.8, reasoning: "high", speed: "Slowest", load: "Highest", description: "Largest output budget allowed by your settings." },
+  ADAPTIVE: { label: "Adaptive", scale: 1, reasoning: "medium", speed: "Variable", load: "Variable", description: "Selects a budget from request length and complexity cues." },
+};
+
+export function resolveEffort(settings = {}, text = "") {
+  let key = Object.hasOwn(EFFORT_PROFILES, settings.effort) ? settings.effort : "STANDARD";
+  if (key === "ADAPTIVE") {
+    const value = String(text);
+    const score = (value.length > 1200 ? 2 : value.length > 400 ? 1 : 0)
+      + (/\b(architect|compare|analy[sz]e|debug|design|prove|trade.?off|step.?by.?step|сложн|сравн|проанализ|архитектур|отлад)/i.test(value) ? 1 : 0);
+    key = score >= 3 ? "EXPERT" : score >= 2 ? "DEEP" : score >= 1 ? "FOCUSED" : "STANDARD";
+  }
+  return { key, ...EFFORT_PROFILES[key] };
+}
+
+export function generationOptions(settings = {}, provider, text = "") {
+  const effort = resolveEffort(settings, text);
+  const max = Math.min(32768, Math.max(128, Math.round((Number(settings.maxTokens) || 1024) * effort.scale)));
+  const common = { temperature: Number(settings.temperature), top_p: Number(settings.topP) };
+  if (provider === "ollama") return { ...common, num_predict: max, num_ctx: Number(settings.contextTokens) || 4096 };
+  if (provider === "lmstudio-native") return { ...common, max_output_tokens: max, context_length: Number(settings.contextTokens) || 4096 };
+  return { ...common, max_tokens: max, ...(settings.sendReasoningEffort ? { reasoning_effort: effort.reasoning } : {}) };
+}

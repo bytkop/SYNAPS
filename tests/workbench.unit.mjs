@@ -1,7 +1,7 @@
 import { normalizeLocale, resolveLocale, translateMessage } from "../src/i18n.js";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createExperiment, resolveVariables, sanitizeProjectSettings, serializeProject, validateGraph, validateProject, validateProviderConfig } from "../src/workbench.js";
+import { createExperiment, EFFORT_PROFILES, generationOptions, resolveEffort, resolveVariables, sanitizeProjectSettings, serializeProject, validateGraph, validateProject, validateProviderConfig } from "../src/workbench.js";
 
 test("provider validation accepts local endpoints and explains unavailable configuration", () => {
   assert.equal(validateProviderConfig({ kind: "ollama", baseUrl: "http://localhost:11434" }).kind, "ollama");
@@ -12,6 +12,24 @@ test("provider validation accepts local endpoints and explains unavailable confi
 test("prompt variables resolve known names and preserve missing placeholders", () => {
   assert.equal(resolveVariables("Explain {{task}} for {{audience}} in {{language}}", { task: "graphs", audience: "engineers", language: "English" }), "Explain graphs for engineers in English");
   assert.equal(resolveVariables("{{missing}}", {}), "{{missing}}");
+});
+
+test("effort profiles produce provider-shaped generation budgets", () => {
+  const base = { effort: "STANDARD", maxTokens: 1000, contextTokens: 4096, temperature: 0.4, topP: 0.9 };
+  assert.equal(generationOptions(base, "ollama", "hello").num_predict, 1000);
+  assert.equal(generationOptions({ ...base, effort: "INSTANT" }, "ollama").num_predict, 550);
+  assert.equal(generationOptions({ ...base, effort: "EXPERT" }, "lmstudio-native").max_output_tokens, 1800);
+  assert.equal(generationOptions({ ...base, effort: "DEEP" }, "openai-compatible").reasoning_effort, undefined);
+  assert.equal(generationOptions({ ...base, effort: "DEEP", sendReasoningEffort: true }, "openai-compatible").reasoning_effort, "high");
+  assert.equal(generationOptions({ ...base, effort: "EXPERT", maxTokens: 32768 }, "ollama").num_predict, 32768);
+  assert.equal(generationOptions({ ...base, effort: "LIGHT" }, "ollama").num_ctx, 4096);
+});
+
+test("adaptive effort resolves from request complexity without inventing capability support", () => {
+  assert.equal(resolveEffort({ effort: "ADAPTIVE" }, "quick answer").key, "STANDARD");
+  assert.equal(resolveEffort({ effort: "ADAPTIVE" }, "Please analyze this design").key, "FOCUSED");
+  assert.equal(resolveEffort({ effort: "ADAPTIVE" }, `Compare these systems and analyze the trade-off: ${"details ".repeat(160)}`).key, "EXPERT");
+  assert.equal(EFFORT_PROFILES.EXPERT.reasoning, "high");
 });
 
 test("experiment requires models and preserves raw and resolved prompt details", () => {
@@ -51,6 +69,8 @@ test("bundled UI catalogs translate shared interface strings without a network",
   assert.equal(translateMessage("Эксперименты", "en"), "Experiments");
   assert.equal(translateMessage("Prompt variable language", "ru"), "Переменная language");
   assert.equal(translateMessage("LLM Inference", "zh-CN"), "LLM 推理");
+  assert.equal(translateMessage("Chat Center", "ru"), "Центр чатов");
+  assert.equal(translateMessage("LLM Lab", "zh-CN"), "LLM 实验室");
   assert.equal(translateMessage("Discovered 2 model(s) from ollama at http://localhost", "ru"), "Найдено моделей: 2 · ollama · http://localhost");
   assert.equal(translateMessage("Unlisted provider data", "zh-CN"), "Unlisted provider data");
 });
