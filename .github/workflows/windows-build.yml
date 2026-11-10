@@ -3,12 +3,25 @@ name: Windows build
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-windows:
     runs-on: windows-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,7 +34,7 @@ jobs:
       - name: Install JavaScript dependencies
         env:
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
-        run: npm install --registry=https://registry.npmjs.org/ --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000
+        run: npm install --registry=https://registry.npmjs.org/ --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000 --no-audit --no-fund
       - name: Run UI tests
         run: |
           npx playwright install chromium
