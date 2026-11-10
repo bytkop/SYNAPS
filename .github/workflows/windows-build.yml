@@ -34,7 +34,16 @@ jobs:
       - name: Install JavaScript dependencies
         env:
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
-        run: npm install --registry=https://registry.npmjs.org/ --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000 --no-audit --no-fund
+        run: |
+          if (Test-Path package-lock.json) { npm ci --no-audit --no-fund } else { npm install --registry=https://registry.npmjs.org/ --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000 --no-audit --no-fund }
+        shell: pwsh
+      - name: Force rolldown Windows native binding
+        shell: pwsh
+        run: |
+          $v = node -p "require('rolldown/package.json').version"
+          Write-Host "rolldown version: $v"
+          npm install --no-save --registry=https://registry.npmjs.org/ "@rolldown/binding-win32-x64-msvc@$v"
+          if ($LASTEXITCODE -ne 0) { throw "failed to install rolldown win32 binding" }
       - name: Run UI tests
         run: |
           npx playwright install chromium
