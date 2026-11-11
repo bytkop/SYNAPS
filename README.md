@@ -1,4 +1,4 @@
-# SYNAPS 0.5.0 | Engineering Workbench for Local AI
+# SYNAPS 6.1.0 | Engineering Workbench for Local AI
 
 SYNAPS is a desktop engineering workspace for experimenting with local language models, prompts, workflows, and model behavior. It is a source project, not a compiled Windows installer.
 
