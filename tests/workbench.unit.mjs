@@ -1,7 +1,8 @@
 import { normalizeLocale, resolveLocale, translateMessage } from "../src/i18n.js";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createExperiment, EFFORT_PROFILES, generationOptions, resolveEffort, resolveVariables, sanitizeProjectSettings, serializeProject, validateGraph, validateProject, validateProviderConfig } from "../src/workbench.js";
+import { createExperiment, createOllamaVariantRequest, EFFORT_PROFILES, executeDataNode, generationOptions, parseCsv, resolveEffort, resolveVariables, sanitizeProjectSettings, serializeProject, validateGraph, validateOllamaModelTag, validateProject, validateProviderConfig } from "../src/workbench.js";
+import { createPasswordRecord, createRecoveryCode, verifyPassword, verifyRecoveryCode } from "../src/security.js";
 
 test("provider validation accepts local endpoints and explains unavailable configuration", () => {
   assert.equal(validateProviderConfig({ kind: "ollama", baseUrl: "http://localhost:11434" }).kind, "ollama");
@@ -30,6 +31,60 @@ test("adaptive effort resolves from request complexity without inventing capabil
   assert.equal(resolveEffort({ effort: "ADAPTIVE" }, "Please analyze this design").key, "FOCUSED");
   assert.equal(resolveEffort({ effort: "ADAPTIVE" }, `Compare these systems and analyze the trade-off: ${"details ".repeat(160)}`).key, "EXPERT");
   assert.equal(EFFORT_PROFILES.EXPERT.reasoning, "high");
+});
+
+test("password records store PBKDF2 digests and allow recovery without plaintext", async () => {
+  const recovery = createRecoveryCode();
+  const record = await createPasswordRecord("a sufficiently long password", recovery);
+  assert.equal(record.algorithm, "PBKDF2-SHA256");
+  assert.equal(Object.values(record).includes("a sufficiently long password"), false);
+  assert.equal(await verifyPassword(record, "a sufficiently long password"), true);
+  assert.equal(await verifyPassword(record, "wrong password"), false);
+  assert.equal(await verifyRecoveryCode(record, recovery), true);
+  assert.equal(await verifyRecoveryCode(record, "BAD-CODE"), false);
+  await assert.rejects(createPasswordRecord("short", recovery), /at least 10/);
+});
+
+test("Ollama model pull tags reject malformed paths and unsafe characters", () => {
+  assert.equal(validateOllamaModelTag("llama3.2:latest"), "llama3.2:latest");
+  assert.equal(validateOllamaModelTag("namespace/model:tag"), "namespace/model:tag");
+  assert.throws(() => validateOllamaModelTag("../secret"), /valid Ollama/);
+  assert.throws(() => validateOllamaModelTag("model name"), /only letters/);
+  assert.throws(() => validateOllamaModelTag("/absolute"), /only letters/);
+  assert.throws(() => validateOllamaModelTag("x".repeat(201)), /max 200/);
+});
+
+test("Ollama derived-model request keeps base intact and validates settings", () => {
+  const request = createOllamaVariantRequest({
+    baseModel: "llama3.2:latest", newModel: "synaps-helper:v1",
+    systemPrompt: "Answer in Russian.", temperature: 0.35, topP: 0.88,
+    topK: 36, contextTokens: 8192, maxTokens: 2048, stopSequences: ["END", ""],
+  });
+  assert.deepEqual(request, {
+    baseModel: "llama3.2:latest", newModel: "synaps-helper:v1", systemPrompt: "Answer in Russian.",
+    temperature: 0.35, topP: 0.88, topK: 36, numCtx: 8192, numPredict: 2048, stopSequences: ["END"],
+  });
+  assert.throws(() => createOllamaVariantRequest({ baseModel: "same", newModel: "same", temperature: 0.3, topP: 0.9, contextTokens: 4096, maxTokens: 512 }), /will not be overwritten/);
+  assert.throws(() => createOllamaVariantRequest({ baseModel: "base", newModel: "derived", temperature: 3, topP: 0.9, contextTokens: 4096, maxTokens: 512 }), /Temperature/);
+});
+
+test("CSV parser handles quoted commas and rejects malformed row widths", () => {
+  assert.deepEqual(parseCsv('name,note\nAda,"systems, design"\nLin,"says ""hello"""'), [
+    { name: "Ada", note: "systems, design" },
+    { name: "Lin", note: 'says "hello"' },
+  ]);
+  assert.throws(() => parseCsv("a,b\n1"), /different number/);
+  assert.throws(() => parseCsv('a\n"unfinished'), /inside a quoted/);
+});
+
+test("safe graph data nodes parse, merge, filter and label heuristic counts", () => {
+  assert.deepEqual(executeDataNode("JSON Input", [], {}, '{"ok":true}'), { ok: true });
+  assert.deepEqual(executeDataNode("CSV Input", [], {}, "id,name\n1,Ada"), [{ id: "1", name: "Ada" }]);
+  assert.deepEqual(executeDataNode("Merge", [[1, 2], [3]], {}), [1, 2, 3]);
+  assert.deepEqual(executeDataNode("Data Merge", [{ a: 1 }, { b: 2 }], {}), { a: 1, b: 2 });
+  assert.deepEqual(executeDataNode("Data Filter", [[{ kind: "ok" }, { kind: "no" }]], { path: "kind", equals: "ok" }), [{ kind: "ok" }]);
+  assert.equal(executeDataNode("Switch", ["yes"], { case: "yes" }).branch, "case");
+  assert.equal(executeDataNode("Token Counter", ["hello"], {}).exact, false);
 });
 
 test("experiment requires models and preserves raw and resolved prompt details", () => {

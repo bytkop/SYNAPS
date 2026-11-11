@@ -32,6 +32,9 @@ struct ChatMessage { role: String, content: Value }
 struct StreamEvent { kind: String, delta: Option<String>, error: Option<String>, elapsed_ms: Option<u128>, first_chunk_ms: Option<u128>, completion_tokens: Option<u64>, prompt_tokens: Option<u64>, provider_tokens_per_second: Option<f64>, backend_ttft_ms: Option<u128> }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct DownloadEvent { kind: String, status: Option<String>, total: Option<u64>, completed: Option<u64>, error: Option<String> }
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProjectVersion { id: i64, name: String, version: i64, saved_at: i64, json: String }
 
 fn checked_url(config: &ProviderConfig, suffix: &str) -> Result<Url, String> {
@@ -120,6 +123,227 @@ async fn stream_completion(
     let _=on_event.send(StreamEvent{kind:event_kind.into(),delta:None,error,elapsed_ms:Some(elapsed),first_chunk_ms:first_chunk,completion_tokens,prompt_tokens,provider_tokens_per_second:provider_tps,backend_ttft_ms:backend_ttft});
     cancellations().lock().ok().map(|mut m|m.remove(&request_id));Ok(())
 }
+fn validate_ollama_model_name(model: &str) -> Result<&str, String> {
+    let value = model.trim();
+    if value.is_empty() || value.len() > 200 || value.starts_with('-') || value.contains("..") {
+        return Err("Enter a valid Ollama model tag (max 200 characters).".into());
+    }
+    if !value.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | ':' | '.' | '_' | '-')) {
+        return Err("Model tag may contain only letters, numbers, slash, colon, dot, underscore and hyphen.".into());
+    }
+    if value.starts_with('/') || value.ends_with('/') || value.contains("//") {
+        return Err("Model tag path is malformed.".into());
+    }
+    Ok(value)
+}
+fn build_ollama_model_request(
+    base_model: &str,
+    new_model: &str,
+    system_prompt: &str,
+    temperature: f64,
+    top_p: f64,
+    top_k: u32,
+    num_ctx: u32,
+    num_predict: u32,
+    stop_sequences: &[String],
+) -> Result<Value, String> {
+    let base = validate_ollama_model_name(base_model)?;
+    let output = validate_ollama_model_name(new_model)?;
+    if base == output { return Err("Choose a new model name. The base model is never overwritten.".into()); }
+    if system_prompt.len() > 20_000 { return Err("System instructions are limited to 20,000 UTF-8 bytes.".into()); }
+    if !temperature.is_finite() || !(0.0..=2.0).contains(&temperature) { return Err("Temperature must be between 0 and 2.".into()); }
+    if !top_p.is_finite() || !(0.01..=1.0).contains(&top_p) { return Err("Top P must be between 0.01 and 1.".into()); }
+    if !(1..=1000).contains(&top_k) { return Err("Top K must be between 1 and 1000.".into()); }
+    if !(256..=131_072).contains(&num_ctx) { return Err("Context must be between 256 and 131072 tokens.".into()); }
+    if !(1..=32_768).contains(&num_predict) { return Err("Output tokens must be between 1 and 32768.".into()); }
+    if stop_sequences.len() > 8 || stop_sequences.iter().any(|value| value.len() > 120) {
+        return Err("Use at most 8 stop sequences, each no longer than 120 bytes.".into());
+    }
+    let mut parameters = json!({
+        "temperature": temperature,
+        "top_p": top_p,
+        "top_k": top_k,
+        "num_ctx": num_ctx,
+        "num_predict": num_predict
+    });
+    if !stop_sequences.is_empty() {
+        parameters["stop"] = json!(stop_sequences);
+    }
+    Ok(json!({
+        "model": output,
+        "from": base,
+        "system": system_prompt,
+        "parameters": parameters,
+        "stream": true
+    }))
+}
+#[tauri::command]
+async fn create_ollama_model(
+    request_id: String,
+    provider: ProviderConfig,
+    base_model: String,
+    new_model: String,
+    system_prompt: String,
+    temperature: f64,
+    top_p: f64,
+    top_k: u32,
+    num_ctx: u32,
+    num_predict: u32,
+    stop_sequences: Vec<String>,
+    on_event: Channel<DownloadEvent>,
+) -> Result<(), String> {
+    if provider.kind != "ollama" {
+        return Err("Creating a derived model configuration requires the local Ollama provider.".into());
+    }
+    let body = build_ollama_model_request(
+        &base_model, &new_model, &system_prompt, temperature, top_p, top_k, num_ctx, num_predict, &stop_sequences,
+    )?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut active = cancellations().lock().map_err(|_| "Model creation cancellation lock failed")?;
+        if active.contains_key(&request_id) { return Err("A request with this ID is already active.".into()); }
+        active.insert(request_id.clone(), cancel.clone());
+    }
+    let result = async {
+        let url = checked_url(&provider, "/api/create")?;
+        let client = Client::builder().connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(24 * 60 * 60)).build()
+            .map_err(|error| format!("HTTP client error: {error}"))?;
+        let mut response = client.post(url).json(&body).send().await
+            .map_err(|error| format!("Ollama model creation failed: {error}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("Ollama returned HTTP {status}: {}", text.chars().take(500).collect::<String>()));
+        }
+        let mut buffer = Vec::<u8>::new();
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                let _ = on_event.send(DownloadEvent {
+                    kind: "cancelled".into(), status: Some("Cancelled. Ollama may leave a partial derived model.".into()),
+                    total: None, completed: None, error: None,
+                });
+                return Ok(());
+            }
+            let chunk = response.chunk().await.map_err(|error| format!("Ollama create stream failed: {error}"))?;
+            let Some(chunk) = chunk else { break };
+            buffer.extend_from_slice(&chunk);
+            while let Some(position) = buffer.iter().position(|byte| *byte == b'\n') {
+                let line = String::from_utf8_lossy(&buffer[..position]).to_string();
+                buffer.drain(..=position);
+                let Ok(event) = serde_json::from_str::<Value>(&line) else { continue };
+                if let Some(message) = event.get("error").and_then(Value::as_str) { return Err(message.to_owned()); }
+                let status = event.get("status").and_then(Value::as_str).unwrap_or("Creating derived model").to_owned();
+                if status.eq_ignore_ascii_case("success") {
+                    let _ = on_event.send(DownloadEvent { kind: "done".into(), status: Some(status), total: None, completed: None, error: None });
+                    return Ok(());
+                }
+                let _ = on_event.send(DownloadEvent {
+                    kind: "progress".into(), status: Some(status), total: event.get("total").and_then(Value::as_u64),
+                    completed: event.get("completed").and_then(Value::as_u64), error: None,
+                });
+            }
+        }
+        if !buffer.is_empty() {
+            if let Ok(event) = serde_json::from_slice::<Value>(&buffer) {
+                if let Some(message) = event.get("error").and_then(Value::as_str) { return Err(message.to_owned()); }
+                let status = event.get("status").and_then(Value::as_str).unwrap_or("").to_owned();
+                if status.eq_ignore_ascii_case("success") {
+                    let _ = on_event.send(DownloadEvent { kind: "done".into(), status: Some(status), total: None, completed: None, error: None });
+                    return Ok(());
+                }
+            }
+        }
+        Err("Ollama create stream ended before reporting success.".into())
+    }.await;
+    cancellations().lock().ok().map(|mut active| active.remove(&request_id));
+    if let Err(error) = &result {
+        let _ = on_event.send(DownloadEvent { kind: "error".into(), status: None, total: None, completed: None, error: Some(error.clone()) });
+    }
+    result
+}
+#[tauri::command]
+async fn pull_ollama_model(
+    request_id: String,
+    provider: ProviderConfig,
+    model: String,
+    on_event: Channel<DownloadEvent>,
+) -> Result<(), String> {
+    if provider.kind != "ollama" {
+        return Err("Model downloads are implemented only through the Ollama local provider.".into());
+    }
+    let model = validate_ollama_model_name(&model)?.to_owned();
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut active = cancellations().lock().map_err(|_| "Download cancellation lock failed")?;
+        if active.contains_key(&request_id) {
+            return Err("A request with this download ID is already active.".into());
+        }
+        active.insert(request_id.clone(), cancel.clone());
+    }
+    let result = async {
+        let url = checked_url(&provider, "/api/pull")?;
+        let client = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(24 * 60 * 60))
+            .build()
+            .map_err(|error| format!("HTTP client error: {error}"))?;
+        let mut response = client.post(url).json(&json!({"name":model,"stream":true})).send().await
+            .map_err(|error| format!("Ollama download connection failed: {error}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("Ollama returned HTTP {status}: {}", body.chars().take(500).collect::<String>()));
+        }
+        let mut buffer = Vec::<u8>::new();
+        let mut last_status = String::new();
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                let _ = on_event.send(DownloadEvent { kind: "cancelled".into(), status: Some("Cancelled; provider may retain partial blobs.".into()), total: None, completed: None, error: None });
+                return Ok(());
+            }
+            let chunk = response.chunk().await.map_err(|error| format!("Ollama download stream failed: {error}"))?;
+            let Some(chunk) = chunk else { break };
+            buffer.extend_from_slice(&chunk);
+            while let Some(position) = buffer.iter().position(|byte| *byte == b'\n') {
+                let line = String::from_utf8_lossy(&buffer[..position]).to_string();
+                buffer.drain(..=position);
+                let Ok(event) = serde_json::from_str::<Value>(&line) else { continue };
+                let status = event.get("status").and_then(Value::as_str).unwrap_or("Downloading").to_owned();
+                last_status = status.clone();
+                let total = event.get("total").and_then(Value::as_u64);
+                let completed = event.get("completed").and_then(Value::as_u64);
+                let error = event.get("error").and_then(Value::as_str).map(str::to_owned);
+                if let Some(message) = error {
+                    return Err(message);
+                }
+                if status.eq_ignore_ascii_case("success") {
+                    let _ = on_event.send(DownloadEvent { kind: "done".into(), status: Some(status), total, completed, error: None });
+                    return Ok(());
+                }
+                let _ = on_event.send(DownloadEvent { kind: "progress".into(), status: Some(status), total, completed, error: None });
+            }
+        }
+        if !buffer.is_empty() {
+            if let Ok(event) = serde_json::from_slice::<Value>(&buffer) {
+                let status = event.get("status").and_then(Value::as_str).unwrap_or(&last_status).to_owned();
+                let total = event.get("total").and_then(Value::as_u64);
+                let completed = event.get("completed").and_then(Value::as_u64);
+                if status.eq_ignore_ascii_case("success") {
+                    let _ = on_event.send(DownloadEvent { kind: "done".into(), status: Some(status), total, completed, error: None });
+                    return Ok(());
+                }
+                let _ = on_event.send(DownloadEvent { kind: "progress".into(), status: Some(status), total, completed, error: None });
+            }
+        }
+        Err("Ollama download stream ended before reporting success.".into())
+    }.await;
+    cancellations().lock().ok().map(|mut active| active.remove(&request_id));
+    if let Err(error) = &result {
+        let _ = on_event.send(DownloadEvent { kind: "error".into(), status: None, total: None, completed: None, error: Some(error.clone()) });
+    }
+    result
+}
 #[tauri::command]
 fn cancel_inference(request_id:String)->Result<bool,String>{let m=cancellations().lock().map_err(|_|"Ошибка блокировки отмены")?;if let Some(flag)=m.get(&request_id){flag.store(true,Ordering::Relaxed);Ok(true)}else{Ok(false)}}
 
@@ -157,7 +381,7 @@ fn list_projects(app:AppHandle)->Result<Vec<ProjectVersion>,String>{let c=databa
 #[tauri::command]
 fn restore_project_version(app:AppHandle,version_id:i64)->Result<ProjectVersion,String>{let c=database(&app)?;let p=c.query_row("SELECT p.name,v.version,v.saved_at,v.json FROM project_versions v JOIN projects p ON p.id=v.project_id WHERE v.id=?1",params![version_id],|r|Ok(ProjectVersion{id:version_id,name:r.get(0)?,version:r.get(1)?,saved_at:r.get(2)?,json:r.get(3)?})).optional().map_err(|e|e.to_string())?;p.ok_or_else(||"Версия проекта не найдена".into())}
 
-fn main(){tauri::Builder::default().invoke_handler(tauri::generate_handler![list_models,stream_completion,cancel_inference,start_llama_server,stop_llama_server,llama_server_status,llama_server_logs,save_project,list_projects,restore_project_version]).run(tauri::generate_context!()).expect("failed to run SYNAPS desktop application");}
+fn main(){tauri::Builder::default().invoke_handler(tauri::generate_handler![list_models,stream_completion,pull_ollama_model,create_ollama_model,cancel_inference,start_llama_server,stop_llama_server,llama_server_status,llama_server_logs,save_project,list_projects,restore_project_version]).run(tauri::generate_context!()).expect("failed to run SYNAPS desktop application");}
 
 #[cfg(test)]
 mod tests{
@@ -168,4 +392,7 @@ mod tests{
  #[test]fn parses_ollama_delta_and_measured_usage(){let(d,p,c,done)=parse_stream_record("ollama",r#"{"message":{"content":"hello"},"prompt_eval_count":3,"eval_count":2,"done":false}"#);assert_eq!(d.as_deref(),Some("hello"));assert_eq!(p,Some(3));assert_eq!(c,Some(2));assert!(!done)}
  #[test]fn parses_openai_sse_delta(){let(d,_,_,_)=parse_stream_record("openai-compatible",r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#);assert_eq!(d.as_deref(),Some("hi"))}
  #[test]fn parses_lmstudio_native_delta_and_stats(){let line=r#"data: {"type":"message.delta","content":"hi"}"#;let(d,_,_,_)=parse_stream_record("lmstudio-native",line);assert_eq!(d.as_deref(),Some("hi"));let stats=r#"data: {"type":"chat.end","result":{"stats":{"input_tokens":8,"total_output_tokens":4,"tokens_per_second":12.5,"time_to_first_token_seconds":0.25}}}"#;let(_,p,c,done)=parse_stream_record("lmstudio-native",stats);assert_eq!(p,Some(8));assert_eq!(c,Some(4));assert!(done);assert_eq!(provider_metrics("lmstudio-native",stats),(Some(12.5),Some(250)))}
+ #[test]fn validates_ollama_model_tags_without_path_traversal(){assert_eq!(validate_ollama_model_name("llama3.2:latest").unwrap(),"llama3.2:latest");assert_eq!(validate_ollama_model_name("org/model:tag").unwrap(),"org/model:tag");assert!(validate_ollama_model_name("../secret").is_err());assert!(validate_ollama_model_name("model name").is_err());assert!(validate_ollama_model_name("/absolute").is_err());}
+ #[test]fn ollama_derived_model_request_changes_config_and_never_overwrites_base(){let body=build_ollama_model_request("llama3.2:latest","my-assistant:v1","Answer in concise Russian.",0.3,0.8,40,8192,2048,&["END".into()]).unwrap();assert_eq!(body["from"],"llama3.2:latest");assert_eq!(body["model"],"my-assistant:v1");assert_eq!(body["system"],"Answer in concise Russian.");assert_eq!(body["parameters"]["temperature"],0.3);assert_eq!(body["parameters"]["top_k"],40);assert_eq!(body["parameters"]["stop"][0],"END");assert!(build_ollama_model_request("base","base","",0.3,0.8,40,8192,2048,&[]).is_err());}
+ #[test]fn ollama_derived_model_request_rejects_out_of_range_parameters(){assert!(build_ollama_model_request("base","derived","",3.0,0.8,40,8192,2048,&[]).is_err());assert!(build_ollama_model_request("base","derived","",0.3,0.0,40,8192,2048,&[]).is_err());assert!(build_ollama_model_request("base","derived","",0.3,0.8,40,10,2048,&[]).is_err());}
 }

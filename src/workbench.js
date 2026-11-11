@@ -9,6 +9,113 @@ export function validateProviderConfig({ kind, baseUrl }) {
   return { kind, baseUrl: url.toString().replace(/\/$/, "") };
 }
 
+export function validateOllamaModelTag(model) {
+  const value = String(model ?? "").trim();
+  if (!value || value.length > 200 || value.startsWith("-") || value.includes("..")) throw new Error("Enter a valid Ollama model tag (max 200 characters).");
+  if (!/^[A-Za-z0-9/:._-]+$/.test(value) || value.startsWith("/") || value.endsWith("/") || value.includes("//")) {
+    throw new Error("Model tag may contain only letters, numbers, slash, colon, dot, underscore and hyphen.");
+  }
+  return value;
+}
+
+export function createOllamaVariantRequest({ baseModel, newModel, systemPrompt = "", temperature, topP, topK = 40, contextTokens, maxTokens, stopSequences = [] }) {
+  const base = validateOllamaModelTag(baseModel);
+  const output = validateOllamaModelTag(newModel);
+  if (base === output) throw new Error("Choose a new model tag. The base model will not be overwritten.");
+  const numeric = {
+    temperature: Number(temperature), topP: Number(topP), topK: Number(topK),
+    numCtx: Number(contextTokens), numPredict: Number(maxTokens),
+  };
+  if (!Number.isFinite(numeric.temperature) || numeric.temperature < 0 || numeric.temperature > 2) throw new Error("Temperature must be between 0 and 2.");
+  if (!Number.isFinite(numeric.topP) || numeric.topP < 0.01 || numeric.topP > 1) throw new Error("Top P must be between 0.01 and 1.");
+  if (!Number.isInteger(numeric.topK) || numeric.topK < 1 || numeric.topK > 1000) throw new Error("Top K must be between 1 and 1000.");
+  if (!Number.isInteger(numeric.numCtx) || numeric.numCtx < 256 || numeric.numCtx > 131072) throw new Error("Context must be between 256 and 131072.");
+  if (!Number.isInteger(numeric.numPredict) || numeric.numPredict < 1 || numeric.numPredict > 32768) throw new Error("Maximum output must be between 1 and 32768.");
+  if (typeof systemPrompt !== "string" || new TextEncoder().encode(systemPrompt).length > 20000) throw new Error("System instructions are limited to 20,000 UTF-8 bytes.");
+  if (!Array.isArray(stopSequences) || stopSequences.length > 8 || stopSequences.some(value => typeof value !== "string" || new TextEncoder().encode(value).length > 120)) {
+    throw new Error("Use at most 8 stop sequences, each no longer than 120 bytes.");
+  }
+  return { baseModel: base, newModel: output, systemPrompt, ...numeric, stopSequences: stopSequences.map(value => value.trim()).filter(Boolean) };
+}
+
+export function parseCsv(text) {
+  const rows = [];
+  let row = [], field = "", quoted = false;
+  const source = String(text ?? "").replace(/^\uFEFF/, "");
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index];
+    if (quoted) {
+      if (char === '"' && source[index + 1] === '"') { field += '"'; index++; }
+      else if (char === '"') quoted = false;
+      else field += char;
+    } else if (char === '"' && field.length === 0) quoted = true;
+    else if (char === ",") { row.push(field); field = ""; }
+    else if (char === "\n" || char === "\r") {
+      if (char === "\r" && source[index + 1] === "\n") index++;
+      row.push(field); field = "";
+      if (row.some(value => value !== "")) rows.push(row);
+      row = [];
+    } else field += char;
+  }
+  if (quoted) throw new Error("CSV ends inside a quoted field.");
+  row.push(field);
+  if (row.some(value => value !== "")) rows.push(row);
+  if (rows.length < 2) return [];
+  const [headers, ...records] = rows;
+  if (headers.some(header => !header.trim()) || new Set(headers).size !== headers.length) throw new Error("CSV headers must be non-empty and unique.");
+  return records.map(values => {
+    if (values.length !== headers.length) throw new Error("CSV row has a different number of columns than the header.");
+    return Object.fromEntries(headers.map((header, index) => [header, values[index]]));
+  });
+}
+
+export function executeDataNode(type, inputs = [], config = {}, text = "") {
+  const first = inputs[0];
+  if (type === "JSON Input") {
+    const source = text || first || "";
+    try { return typeof source === "string" ? JSON.parse(source) : source; }
+    catch { throw new Error("JSON Input contains invalid JSON."); }
+  }
+  if (type === "CSV Input") return parseCsv(text || first || "");
+  if (type === "CSV Parser") return parseCsv(typeof first === "string" ? first : text);
+  if (type === "Split" || type === "Text Splitter") return String(first ?? text ?? "").split(String(config.separator ?? "\n"));
+  if (type === "Merge" || type === "Data Merge" || type === "Text Merger") {
+    const values = inputs.filter(value => value !== undefined && value !== null && value !== "");
+    if (values.every(Array.isArray)) return values.flat();
+    if (values.every(value => value && typeof value === "object" && !Array.isArray(value))) return Object.assign({}, ...values);
+    return values.map(value => typeof value === "string" ? value : JSON.stringify(value)).join(String(config.separator ?? "\n"));
+  }
+  if (type === "Data Filter") {
+    const source = Array.isArray(first) ? first : first && typeof first === "object" ? Object.entries(first).map(([key, value]) => ({ key, value })) : [];
+    const path = String(config.path ?? "");
+    const expected = String(config.equals ?? "");
+    const operator = config.operator ?? "equals";
+    const read = item => path.split(".").filter(Boolean).reduce((value, key) => value?.[key], item);
+    return source.filter(item => {
+      const value = read(item);
+      if (operator === "not-equals") return String(value) !== expected;
+      if (operator === "contains") return String(value ?? "").includes(expected);
+      if (operator === "truthy") return Boolean(value);
+      return String(value) === expected;
+    });
+  }
+  if (type === "If" || type === "Conditional Branch") {
+    const actual = first;
+    const expected = config.equals ?? true;
+    return { matched: String(actual) === String(expected), value: actual, note: "Boolean result only; graph routing is not implemented." };
+  }
+  if (type === "Switch") {
+    const actual = first;
+    const expected = config.case ?? "";
+    return { branch: String(actual) === String(expected) ? "case" : "default", value: actual, note: "Branch label only; graph routing is not implemented." };
+  }
+  if (type === "Token Counter") {
+    const source = typeof first === "string" ? first : JSON.stringify(first ?? text ?? "");
+    return { estimatedTokens: Math.ceil(source.length / 4), exact: false, method: "rough character-count heuristic; provider tokenizer unavailable" };
+  }
+  return undefined;
+}
+
 export function resolveVariables(template, variables = {}) {
   return String(template ?? "").replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, key) => Object.hasOwn(variables, key) ? String(variables[key]) : match);
 }
